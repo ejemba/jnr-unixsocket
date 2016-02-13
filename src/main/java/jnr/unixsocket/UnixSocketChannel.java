@@ -21,6 +21,8 @@ package jnr.unixsocket;
 import jnr.constants.platform.Errno;
 import jnr.constants.platform.ProtocolFamily;
 import jnr.constants.platform.Sock;
+import jnr.constants.platform.SocketLevel;
+import jnr.constants.platform.SocketOption;
 import jnr.enxio.channels.NativeSocketChannel;
 import jnr.ffi.*;
 import jnr.ffi.byref.IntByReference;
@@ -60,6 +62,27 @@ public class UnixSocketChannel extends NativeSocketChannel {
             new UnixSocketChannel(sockets[0], SelectionKey.OP_READ | SelectionKey.OP_WRITE),
             new UnixSocketChannel(sockets[1], SelectionKey.OP_READ | SelectionKey.OP_WRITE)
         };
+    }
+
+    /**
+     * Create a UnixSocketChannel to wrap an existing file descriptor (presumably itself a UNIX socket).
+     *
+     * @param fd the file descriptor to wrap
+     * @return the new UnixSocketChannel instance
+     */
+    public static final UnixSocketChannel fromFD(int fd) {
+        return fromFD(fd, SelectionKey.OP_READ | SelectionKey.OP_WRITE);
+    }
+
+    /**
+     * Create a UnixSocketChannel to wrap an existing file descriptor (presumably itself a UNIX socket).
+     *
+     * @param fd the file descriptor to wrap
+     * @param ops the SelectionKey operations the socket supports
+     * @return the new UnixSocketChannel instance
+     */
+    public static final UnixSocketChannel fromFD(int fd, int ops) {
+        return new UnixSocketChannel(fd, ops);
     }
 
     private UnixSocketChannel() throws IOException {
@@ -149,6 +172,25 @@ public class UnixSocketChannel extends NativeSocketChannel {
         return localAddress != null ? localAddress : (localAddress = getsockname(getFD()));
     }
 
+    /**
+     * Retrieves the credentials for this UNIX socket. If this socket channel
+     * is not in a connected state, this method will return null.
+     * 
+     * @see man unix 7; SCM_CREDENTIALS
+     *
+     * @throws UnsupportedOperationException if the underlying socket library
+     *         doesn't support the SO_PEERCRED option
+     *
+     * @return the credentials of the remote; null if not connected
+     */
+    public final Credentials getCredentials() {
+        if (state != State.CONNECTED) {
+            return null;
+        }
+
+        return Credentials.getCredentials(getFD());
+    }
+
     static UnixSocketAddress getpeername(int sockfd) {
         UnixSocketAddress remote = new UnixSocketAddress();
         IntByReference len = new IntByReference(remote.getStruct().getMaximumLength());
@@ -169,5 +211,22 @@ public class UnixSocketChannel extends NativeSocketChannel {
         }
 
         return remote;
+    }
+
+    public boolean getKeepAlive() {
+        int ret = Native.getsockopt(getFD(), SocketLevel.SOL_SOCKET, SocketOption.SO_KEEPALIVE.intValue());
+        return (ret == 1) ? true : false;
+    }
+
+    public void setKeepAlive(boolean on) {
+        Native.setsockopt(getFD(), SocketLevel.SOL_SOCKET, SocketOption.SO_KEEPALIVE, on);
+    }
+
+    public int getSoTimeout() {
+        return Native.getsockopt(getFD(), SocketLevel.SOL_SOCKET, SocketOption.SO_RCVTIMEO.intValue());
+    }
+
+    public void setSoTimeout(int timeout) {
+        Native.setsockopt(getFD(), SocketLevel.SOL_SOCKET, SocketOption.SO_RCVTIMEO, timeout);
     }
 }

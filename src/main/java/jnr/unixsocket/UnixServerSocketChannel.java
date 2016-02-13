@@ -40,7 +40,7 @@ public class UnixServerSocketChannel extends NativeServerSocketChannel {
     }
 
     UnixServerSocketChannel(SelectorProvider provider, int fd) {
-        super(provider, fd, SelectionKey.OP_ACCEPT);
+        super(provider, fd, SelectionKey.OP_ACCEPT | SelectionKey.OP_READ);
         this.socket = new UnixServerSocket(this);
     }
 
@@ -67,5 +67,13 @@ public class UnixServerSocketChannel extends NativeServerSocketChannel {
 
     public final UnixServerSocket socket() {
         return socket;
+    }
+
+    public final UnixSocketAddress getRemoteSocketAddress() {
+        return null;
+    }
+
+    public final UnixSocketAddress getLocalSocketAddress() {
+        return socket.localAddress;
     }
 }

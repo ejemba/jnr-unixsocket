@@ -18,29 +18,37 @@
 
 package jnr.unixsocket;
 
+import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+
 import jnr.constants.platform.ProtocolFamily;
 import jnr.constants.platform.Sock;
 import jnr.constants.platform.SocketLevel;
 import jnr.constants.platform.SocketOption;
-import jnr.ffi.*;
+import jnr.ffi.LastError;
+import jnr.ffi.Library;
+import jnr.ffi.LibraryLoader;
+import jnr.ffi.Platform;
+import jnr.ffi.Pointer;
+import jnr.ffi.Runtime;
+import jnr.ffi.Struct;
 import jnr.ffi.annotations.In;
 import jnr.ffi.annotations.Out;
 import jnr.ffi.annotations.Transient;
 import jnr.ffi.byref.IntByReference;
-
-import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
+import jnr.posix.DefaultNativeTimeval;
+import jnr.posix.Timeval;
 
 class Native {
     static final String[] libnames = Platform.getNativePlatform().getOS() == Platform.OS.SOLARIS
                         ? new String[] { "socket", "nsl", "c" }
                         : new String[] { "c" };
     public static interface LibC {
-        static final LibC INSTANCE = Library.loadLibrary(LibC.class, libnames);
-        public static final int F_GETFL = com.kenai.constantine.platform.Fcntl.F_GETFL.value();
-        public static final int F_SETFL = com.kenai.constantine.platform.Fcntl.F_SETFL.value();
-        public static final int O_NONBLOCK = com.kenai.constantine.platform.OpenFlags.O_NONBLOCK.value();
+        
+        public static final int F_GETFL = jnr.constants.platform.Fcntl.F_GETFL.intValue();
+        public static final int F_SETFL = jnr.constants.platform.Fcntl.F_SETFL.intValue();
+        public static final int O_NONBLOCK = jnr.constants.platform.OpenFlags.O_NONBLOCK.intValue();
 
         int socket(int domain, int type, int protocol);
         int listen(int fd, int backlog);
@@ -52,16 +60,28 @@ class Native {
         int socketpair(int domain, int type, int protocol, @Out int[] sv);
         int fcntl(int fd, int cmd, int data);
         int getsockopt(int s, int level, int optname, @Out ByteBuffer optval, @In @Out IntByReference optlen);
+        int getsockopt(int s, int level, int optname, @Out Timeval optval, @In @Out IntByReference optlen);
         int setsockopt(int s, int level, int optname, @In ByteBuffer optval, int optlen);
+        int setsockopt(int s, int level, int optname, @In Timeval optval, int optlen);
         String strerror(int error);
+    }
+    
+    static final LibC INSTANCE;
+    
+    static {
+        LibraryLoader<LibC> loader = LibraryLoader.create(LibC.class);
+        for (String libraryName : libnames) {
+            loader.library(libraryName);
+        }
+        INSTANCE = loader.load();
     }
 
     static final LibC libsocket() {
-        return LibC.INSTANCE;
+        return INSTANCE;
     }
 
     static final LibC libc() {
-        return LibC.INSTANCE;
+        return INSTANCE;
     }
 
     static int socket(ProtocolFamily domain, Sock type, int protocol) throws IOException {
@@ -114,9 +134,47 @@ class Native {
     }
 
     public static int setsockopt(int s, SocketLevel level, SocketOption optname, boolean optval) {
-        ByteBuffer buf = ByteBuffer.allocate(4);
-        buf.order(ByteOrder.BIG_ENDIAN);
-        buf.putInt(optval ? 1 : 0).flip();
-        return libsocket().setsockopt(s, level.intValue(), optname.intValue(), buf, buf.remaining());
+        return setsockopt(s, level, optname, optval ? 1 : 0);
+    }
+
+    public static int setsockopt(int s, SocketLevel level, SocketOption optname, int optval) {
+        if (optname == SocketOption.SO_RCVTIMEO) {
+            DefaultNativeTimeval t = new DefaultNativeTimeval(Runtime.getSystemRuntime());
+            t.setTime(new long [] {optval / 1000, (optval % 1000) * 1000});
+            return libsocket().setsockopt(s, level.intValue(), optname.intValue(), t, DefaultNativeTimeval.size(t));
+        } else {
+            ByteBuffer buf = ByteBuffer.allocate(4);
+            buf.order(ByteOrder.BIG_ENDIAN);
+            buf.putInt(optval).flip();
+            return libsocket().setsockopt(s, level.intValue(), optname.intValue(), buf, buf.remaining());
+        }
+    }
+
+    public static int getsockopt (int s, SocketLevel level, int optname) {
+        IntByReference ref;
+        if (optname == SocketOption.SO_RCVTIMEO.intValue()) {
+            DefaultNativeTimeval t = new DefaultNativeTimeval(Runtime.getSystemRuntime());
+            ref = new IntByReference(DefaultNativeTimeval.size(t));
+            Native.libsocket().getsockopt(s, level.intValue(), optname, t, ref);
+            return (t.tv_sec.intValue() * 1000) + (t.tv_usec.intValue() / 1000);
+        } else {
+            ByteBuffer buf = ByteBuffer.allocate(4);
+            buf.order(ByteOrder.BIG_ENDIAN);
+            ref = new IntByReference(4);
+            Native.libsocket().getsockopt(s, level.intValue(), optname, buf, ref);
+            return buf.getInt();
+        }
+    }
+
+    public static int getsockopt(int s, SocketLevel level, SocketOption optname, Struct data) {
+        Pointer struct_ptr = Struct.getMemory(data);
+        IntByReference ref = new IntByReference(Struct.size(data));
+        ByteBuffer buf = ByteBuffer.wrap((byte[])struct_ptr.array());
+
+        return Native.libsocket().getsockopt(s, level.intValue(), optname.intValue(), buf, ref);
+    }
+
+    public static boolean getboolsockopt (int s, SocketLevel level, int optname) {
+        return getsockopt(s, level, optname) != 0;
     }
 }
